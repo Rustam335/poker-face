@@ -1,0 +1,16 @@
+{
+  "name": "poker-face",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Webcam-only stream overlay game built on the Presage SmartSpectra SDK",
+  "packageManager": "yarn@4.6.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "spike": "node --env-file=.env spike-poker-face.mjs"
+  },
+  "dependencies": {
+    "@smartspectra/node-sdk": "^3.5.0"
+  }
+}

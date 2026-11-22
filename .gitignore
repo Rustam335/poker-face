@@ -1,0 +1,12 @@
+node_modules/
+.env
+.yarn/
+dist/
+out/
+*.log
+
+# Local only
+.idea/
+docs/brainstorm-*.md
+CLAUDE.md
+docs/HANDOFF.md

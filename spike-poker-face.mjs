@@ -1,0 +1,196 @@
+// Throwaway spike: how fast and how reliable are SmartSpectra's face and pulse
+// signals on this machine? Answers open questions 1-3 in docs/HANDOFF.md.
+//
+// Run:  yarn spike            (reads SMARTSPECTRA_API_KEY from .env)
+// Test: sit still 30s -> talk 30s -> press ENTER and smile/gasp right away
+//       (repeat a few times) -> move your head -> Ctrl+C for the summary.
+
+import {
+  SmartSpectraSDK,
+  CameraSelection,
+  MetricType,
+  ValidationCode,
+  ProcessingStatus,
+  faceMetrics,
+  decodeMetrics,
+} from '@smartspectra/node-sdk';
+
+const API_KEY = process.env.SMARTSPECTRA_API_KEY;
+const CAMERA_NAME = process.env.CAMERA_NAME ?? ''; // substring match, e.g. "Integrated"
+const REACTION_LABELS = ['HAPPY', 'SURPRISE', 'FEAR'];
+const REACTION_THRESHOLD = 50; // expression score 0-100 that counts as "broke"
+const PRINT_EVERY_MS = 500;
+
+const EXPRESSION_NAMES = [
+  'UNSPECIFIED', 'ANGRY', 'CONTEMPT', 'DISGUST', 'FEAR', 'HAPPY', 'NEUTRAL', 'SAD', 'SURPRISE',
+];
+
+if (!API_KEY) {
+  console.error('SMARTSPECTRA_API_KEY is not set. Copy .env.example to .env and fill it in.');
+  process.exit(1);
+}
+
+const nameOf = (table, value) =>
+  Object.keys(table).find((key) => table[key] === value) ?? String(value);
+const toNumber = (v) => (typeof v === 'number' ? v : v?.toNumber?.() ?? Number(v));
+const last = (list) => (list && list.length > 0 ? list[list.length - 1] : null);
+const median = (values) => {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+};
+
+const stats = {
+  startedAt: Date.now(),
+  packets: 0,
+  packetGapsMs: [],
+  expressionPackets: 0,
+  expressionLagMs: [],
+  expressionStable: 0,
+  pulseSamples: 0,
+  pulseStable: 0,
+  pulseValues: [],
+  reactionLatenciesMs: [],
+  validation: {},
+  rawPrinted: false,
+};
+let lastPacketAt = 0;
+let lastPrintAt = 0;
+let markAt = null; // set when ENTER is pressed; cleared when a reaction is seen
+
+function pickCamera() {
+  const cameras = SmartSpectraSDK.availableCameras();
+  console.log('Cameras:', cameras.map((c) => c.name).join(' | ') || '(none)');
+  if (!CAMERA_NAME) return CameraSelection.default;
+  const match = cameras.find((c) => (c.name ?? '').toLowerCase().includes(CAMERA_NAME.toLowerCase()));
+  if (!match) {
+    console.error(`No camera matching "${CAMERA_NAME}".`);
+    process.exit(1);
+  }
+  console.log('Using camera:', match.name);
+  return CameraSelection.byId(match.id);
+}
+
+function readExpression(face) {
+  const expression = last(face?.expression);
+  if (!expression) return null;
+  const scores = Object.fromEntries(
+    (expression.scores ?? []).map((s) => [EXPRESSION_NAMES[s.type] ?? String(s.type), s.confidence]),
+  );
+  const [topLabel, topScore] = Object.entries(scores).sort((a, b) => b[1] - a[1])[0] ?? ['?', 0];
+  return {
+    scores,
+    topLabel,
+    topScore,
+    stable: Boolean(expression.stable),
+    lagMs: Date.now() - toNumber(expression.timestamp) / 1000,
+  };
+}
+
+function onMetrics(buf) {
+  const now = Date.now();
+  const metrics = decodeMetrics(buf);
+  stats.packets += 1;
+  if (lastPacketAt) stats.packetGapsMs.push(now - lastPacketAt);
+  lastPacketAt = now;
+
+  const expression = readExpression(metrics.face);
+  const pulse = last(metrics.cardio?.pulseRate);
+  const blink = last(metrics.face?.blinking);
+  const talk = last(metrics.face?.talking);
+
+  if (!stats.rawPrinted && (expression || pulse)) {
+    stats.rawPrinted = true;
+    const raw = metrics.toJSON();
+    if (raw.face?.landmarks) raw.face.landmarks = `[${raw.face.landmarks.length} sets omitted]`;
+    console.log('\n--- first raw packet (verify shapes) ---');
+    console.log(JSON.stringify(raw, null, 1).slice(0, 3000));
+    console.log('--- end raw packet ---\n');
+  }
+
+  if (expression) {
+    stats.expressionPackets += 1;
+    if (expression.stable) stats.expressionStable += 1;
+    stats.expressionLagMs.push(expression.lagMs);
+
+    const reaction = REACTION_LABELS.find((label) => (expression.scores[label] ?? 0) >= REACTION_THRESHOLD);
+    if (markAt && reaction) {
+      const latency = now - markAt;
+      stats.reactionLatenciesMs.push(latency);
+      console.log(`\n>>> REACTION ${reaction} ${expression.scores[reaction].toFixed(0)} — ${latency} ms after ENTER\n`);
+      markAt = null;
+    }
+  }
+
+  if (pulse) {
+    stats.pulseSamples += 1;
+    if (pulse.stable) {
+      stats.pulseStable += 1;
+      stats.pulseValues.push(pulse.value);
+    }
+  }
+
+  if (now - lastPrintAt < PRINT_EVERY_MS) return;
+  lastPrintAt = now;
+  const parts = [
+    expression
+      ? `face ${expression.topLabel} ${expression.topScore.toFixed(0)}${expression.stable ? '' : '?'} lag ${expression.lagMs.toFixed(0)}ms`
+      : 'face -',
+    pulse ? `pulse ${pulse.value.toFixed(0)} conf ${pulse.confidence.toFixed(0)} ${pulse.stable ? 'STABLE' : 'unstable'}` : 'pulse -',
+    blink ? `blink ${blink.detected ? 'Y' : 'n'}` : '',
+    talk ? `talk ${talk.detected ? 'Y' : 'n'}` : '',
+  ];
+  console.log(parts.filter(Boolean).join(' | '));
+}
+
+function printSummary() {
+  const seconds = (Date.now() - stats.startedAt) / 1000;
+  const pct = (part, whole) => (whole ? `${((100 * part) / whole).toFixed(0)}%` : 'n/a');
+  console.log('\n================ SUMMARY ================');
+  console.log(`Duration:            ${seconds.toFixed(0)} s`);
+  console.log(`Metrics packets:     ${stats.packets} (${(stats.packets / seconds).toFixed(1)}/s, median gap ${median(stats.packetGapsMs)} ms)`);
+  console.log(`Expression packets:  ${stats.expressionPackets} (${(stats.expressionPackets / seconds).toFixed(1)}/s), stable ${pct(stats.expressionStable, stats.expressionPackets)}`);
+  console.log(`Expression lag:      median ${median(stats.expressionLagMs)?.toFixed(0)} ms (capture -> callback)`);
+  console.log(`ENTER -> reaction:   ${stats.reactionLatenciesMs.join(', ') || 'none recorded'} ms (includes your own reaction time)`);
+  console.log(`Pulse samples:       ${stats.pulseSamples}, stable ${pct(stats.pulseStable, stats.pulseSamples)}, median ${median(stats.pulseValues)?.toFixed(0) ?? 'n/a'} BPM`);
+  console.log('Validation codes:   ', stats.validation);
+  console.log('=========================================');
+}
+
+const sdk = new SmartSpectraSDK({
+  apiKey: API_KEY,
+  requestedMetrics: [...faceMetrics, MetricType.PULSE_RATE],
+  enableTelemetry: false,
+});
+
+sdk.on('processingStatus', (status) => console.log('[status]', nameOf(ProcessingStatus, status)));
+sdk.on('validationStatus', (code, _ts, hint) => {
+  const name = nameOf(ValidationCode, code);
+  if (!stats.validation[name]) console.log('[validation]', name, hint);
+  stats.validation[name] = (stats.validation[name] ?? 0) + 1;
+});
+sdk.on('error', (code, message, retryable) => console.error('[error]', code, message, 'retryable=', retryable));
+sdk.on('metrics', onMetrics);
+
+process.stdin.on('data', () => {
+  markAt = Date.now();
+  console.log('\n>>> MARK — react now!\n');
+});
+
+let stopping = false;
+process.on('SIGINT', async () => {
+  if (stopping) return;
+  stopping = true;
+  printSummary();
+  try {
+    await sdk.stopAsync();
+    await sdk.destroy();
+  } catch (error) {
+    console.error('Shutdown error:', error.message);
+  }
+  process.exit(0);
+});
+
+sdk.useCamera(pickCamera());
+sdk.start();
+console.log(`SmartSpectra ${SmartSpectraSDK.version} started. ENTER = mark a reaction, Ctrl+C = summary.`);
