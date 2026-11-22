@@ -63,7 +63,9 @@ Set `OVERLAY_PORT` in `.env` to change the port.
 - **What is processed.** Webcam frames are analysed by the SmartSpectra SDK on this computer to produce expression scores, face-validity codes and a pulse estimate.
 - **What is stored.** Nothing. The app writes no video, images, readings or logs to disk. Game state, including the leaderboard, lives in memory and is gone when the app closes.
 - **What is shared.** The overlay page receives game state only: timer, points, a strain bar, viewer names, and a rounded pulse number while the reading is stable. It is served on `127.0.0.1` and is not reachable from other machines. If you add it to a stream, your viewers see what the overlay shows.
-- **Presage.** The SDK contacts Presage to validate the API key. The SDK's optional telemetry is disabled in this app (`enableTelemetry: false`). The SDK's own data handling is governed by Presage's terms and privacy documentation.
+- **Presage.** The SDK is a native runtime that runs locally and makes its own authenticated requests to Presage's servers; those requests can be linked to the API key's account. This app disables the SDK's optional telemetry (`enableTelemetry: false`), which per Presage's [telemetry documentation](https://smartspectra.presagetech.com/docs/telemetry-and-privacy) means no session summaries or device readiness reports are sent. That page does not describe the SDK's other server requests, so this app makes no claim about them; see Presage's [privacy policy](https://api.physiology.presagetech.com/privacypolicy).
+- **Retention and deletion.** Nothing is retained by this app, so there is nothing to delete. Closing the app or pressing "Turn camera off" discards the session.
+- **No AI services.** The app calls no AI or cloud service of its own.
 - **Not medical.** Pulse is shown for entertainment, only while the SDK marks it stable, and is never interpreted as a health indicator.
 - **One person.** Only the consenting streamer should be on camera. The clock pauses when more than one face is detected.
 - **API key.** Read from `.env`, which is git-ignored. It is never sent to the control window or the overlay.
