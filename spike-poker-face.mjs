@@ -15,15 +15,32 @@ import {
   decodeMetrics,
 } from '@smartspectra/node-sdk';
 
+import { appendFileSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+
 const API_KEY = process.env.SMARTSPECTRA_API_KEY;
 const CAMERA_NAME = process.env.CAMERA_NAME ?? ''; // substring match, e.g. "Integrated"
 const REACTION_LABELS = ['HAPPY', 'SURPRISE', 'FEAR'];
 const REACTION_THRESHOLD = 50; // expression score 0-100 that counts as "broke"
 const PRINT_EVERY_MS = 500;
+// SPIKE_AUTO=1: hands-free run. Spoken cues + beeps replace ENTER/Ctrl+C (Windows only).
+const AUTO = process.env.SPIKE_AUTO === '1';
+const MARK_WINDOW_MS = 6000;
 
 const EXPRESSION_NAMES = [
   'UNSPECIFIED', 'ANGRY', 'CONTEMPT', 'DISGUST', 'FEAR', 'HAPPY', 'NEUTRAL', 'SAD', 'SURPRISE',
 ];
+
+// Mirror everything printed to spike.log (git-ignored) so the run can be reviewed afterwards.
+const LOG_FILE = 'spike.log';
+writeFileSync(LOG_FILE, `spike run ${new Date().toISOString()}\n`);
+for (const level of ['log', 'error']) {
+  const original = console[level].bind(console);
+  console[level] = (...args) => {
+    original(...args);
+    appendFileSync(LOG_FILE, `${args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')}\n`);
+  };
+}
 
 if (!API_KEY) {
   console.error('SMARTSPECTRA_API_KEY is not set. Copy .env.example to .env and fill it in.');
@@ -53,7 +70,15 @@ const stats = {
   reactionLatenciesMs: [],
   validation: {},
   rawPrinted: false,
+  phases: {},
+  marks: [], // { at, peak, peakLabel, latencyMs }
 };
+let phase = 'manual';
+const phaseStats = () =>
+  (stats.phases[phase] ??= {
+    expressionPackets: 0, reactionHits: 0, maxReaction: 0, labels: {},
+    pulseSamples: 0, pulseStable: 0, talkPackets: 0, talkDetected: 0,
+  });
 let lastPacketAt = 0;
 let lastPrintAt = 0;
 let markAt = null; // set when ENTER is pressed; cleared when a reaction is seen
@@ -108,7 +133,28 @@ function onMetrics(buf) {
     console.log('--- end raw packet ---\n');
   }
 
+  const ps = phaseStats();
+  if (talk) {
+    ps.talkPackets += 1;
+    if (talk.detected) ps.talkDetected += 1;
+  }
+  if (pulse) {
+    ps.pulseSamples += 1;
+    if (pulse.stable) ps.pulseStable += 1;
+  }
   if (expression) {
+    const [peakLabel, peak] = REACTION_LABELS
+      .map((label) => [label, expression.scores[label] ?? 0])
+      .sort((a, b) => b[1] - a[1])[0];
+    ps.expressionPackets += 1;
+    ps.labels[expression.topLabel] = (ps.labels[expression.topLabel] ?? 0) + 1;
+    ps.maxReaction = Math.max(ps.maxReaction, peak);
+    if (peak >= REACTION_THRESHOLD) ps.reactionHits += 1;
+    const mark = last(stats.marks);
+    if (mark && now - mark.at <= MARK_WINDOW_MS) {
+      if (peak > mark.peak) Object.assign(mark, { peak, peakLabel });
+      if (mark.latencyMs === null && peak >= REACTION_THRESHOLD) mark.latencyMs = now - mark.at;
+    }
     stats.expressionPackets += 1;
     if (expression.stable) stats.expressionStable += 1;
     stats.expressionLagMs.push(expression.lagMs);
@@ -154,6 +200,15 @@ function printSummary() {
   console.log(`ENTER -> reaction:   ${stats.reactionLatenciesMs.join(', ') || 'none recorded'} ms (includes your own reaction time)`);
   console.log(`Pulse samples:       ${stats.pulseSamples}, stable ${pct(stats.pulseStable, stats.pulseSamples)}, median ${median(stats.pulseValues)?.toFixed(0) ?? 'n/a'} BPM`);
   console.log('Validation codes:   ', stats.validation);
+  for (const mark of stats.marks) {
+    console.log(`Mark: peak ${mark.peakLabel ?? '-'} ${mark.peak.toFixed(0)}, crossed ${REACTION_THRESHOLD} after ${mark.latencyMs ?? 'never'} ms`);
+  }
+  for (const [name, p] of Object.entries(stats.phases)) {
+    console.log(
+      `Phase ${name}: expr ${p.expressionPackets}, reaction hits ${p.reactionHits} (max ${p.maxReaction.toFixed(0)}), ` +
+      `pulse ${p.pulseStable}/${p.pulseSamples} stable, talk ${p.talkDetected}/${p.talkPackets}, labels ${JSON.stringify(p.labels)}`,
+    );
+  }
   console.log('=========================================');
 }
 
@@ -163,7 +218,15 @@ const sdk = new SmartSpectraSDK({
   enableTelemetry: false,
 });
 
-sdk.on('processingStatus', (status) => console.log('[status]', nameOf(ProcessingStatus, status)));
+let autoStarted = false;
+sdk.on('processingStatus', (status) => {
+  const name = nameOf(ProcessingStatus, status);
+  console.log('[status]', name);
+  if (AUTO && !autoStarted && name === 'kRunning') {
+    autoStarted = true;
+    startAutoScript();
+  }
+});
 sdk.on('validationStatus', (code, _ts, hint) => {
   const name = nameOf(ValidationCode, code);
   if (!stats.validation[name]) console.log('[validation]', name, hint);
@@ -172,13 +235,15 @@ sdk.on('validationStatus', (code, _ts, hint) => {
 sdk.on('error', (code, message, retryable) => console.error('[error]', code, message, 'retryable=', retryable));
 sdk.on('metrics', onMetrics);
 
-process.stdin.on('data', () => {
+function mark() {
   markAt = Date.now();
-  console.log('\n>>> MARK — react now!\n');
-});
+  stats.marks.push({ at: markAt, peak: 0, peakLabel: null, latencyMs: null });
+  console.log('\n\n>>> MARK - react now!\n\n');
+}
+if (!AUTO) process.stdin.on('data', mark);
 
 let stopping = false;
-process.on('SIGINT', async () => {
+async function shutdown() {
   if (stopping) return;
   stopping = true;
   printSummary();
@@ -189,7 +254,28 @@ process.on('SIGINT', async () => {
     console.error('Shutdown error:', error.message);
   }
   process.exit(0);
-});
+}
+process.on('SIGINT', shutdown);
+
+function startAutoScript() {
+  const cue = spawn('powershell', ['-NoProfile', '-Command', '-'], { stdio: ['pipe', 'ignore', 'ignore'] });
+  cue.stdin.write('Add-Type -AssemblyName System.Speech; $v = New-Object System.Speech.Synthesis.SpeechSynthesizer\n');
+  const say = (text) => cue.stdin.write(`$v.SpeakAsync('${text}') | Out-Null\n`);
+  const beep = () => cue.stdin.write('[console]::beep(1000,250)\n');
+  const at = (seconds, fn) => setTimeout(fn, seconds * 1000);
+  const enter = (name, text) => () => {
+    phase = name;
+    console.log(`\n=== PHASE ${name} ===\n`);
+    say(text);
+  };
+  enter('still', 'Sit still. Neutral face.')();
+  at(30, enter('talk', 'Talk now. Keep talking.'));
+  at(60, enter('react', 'Stop talking. Neutral face. Smile or gasp at each beep.'));
+  for (const seconds of [70, 80, 90, 100]) at(seconds, () => { beep(); mark(); });
+  at(110, enter('move', 'Move your head around.'));
+  at(130, enter('still2', 'Sit still again.'));
+  at(155, () => { say('Done.'); setTimeout(() => { cue.stdin.end(); shutdown(); }, 1500); });
+}
 
 sdk.useCamera(pickCamera());
 sdk.start();
