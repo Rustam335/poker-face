@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Poker Face overlay</title>
+  <link rel="stylesheet" href="/overlay.css">
+</head>
+<body data-phase="idle">
+  <main class="stage">
+    <section class="hand" aria-label="Round status">
+      <header class="hand-head">
+        <span class="suit" aria-hidden="true">♠</span>
+        <h1>Poker Face</h1>
+        <span class="phase" id="phase">waiting</span>
+      </header>
+      <p class="clock" id="clock">0:00.0</p>
+      <div class="strain" role="meter" aria-label="Face strain" aria-valuemin="0" aria-valuemax="100" id="strain">
+        <span class="strain-fill" id="strain-fill"></span>
+        <span class="strain-label" id="strain-label">steady</span>
+      </div>
+      <dl class="chips">
+        <div class="chip">
+          <dt>Points</dt>
+          <dd id="points">0</dd>
+        </div>
+        <div class="chip chip-pulse" id="pulse-chip">
+          <dt>Pulse</dt>
+          <dd id="pulse">signal lost</dd>
+        </div>
+        <div class="chip">
+          <dt>Tension</dt>
+          <dd id="multiplier">×1.0</dd>
+        </div>
+      </dl>
+    </section>
+
+    <ol class="feed" id="feed" aria-label="Incoming distractions"></ol>
+
+    <aside class="board" id="board" aria-label="Top breakers">
+      <h2>Top Breakers</h2>
+      <ol id="board-list"></ol>
+    </aside>
+
+    <section class="broken" id="broken" aria-live="assertive">
+      <p class="broken-kicker" id="broken-label">cracked</p>
+      <p class="broken-title">Poker Face<br>Broken!</p>
+      <p class="broken-by" id="broken-by"></p>
+    </section>
+  </main>
+  <script src="/overlay.js" defer></script>
+</body>
+</html>

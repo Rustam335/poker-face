@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Poker Face</title>
+  <link rel="stylesheet" href="control.css">
+</head>
+<body>
+  <section class="consent" id="consent" aria-labelledby="consent-title">
+    <div class="consent-card">
+      <p class="eyebrow">Before the camera turns on</p>
+      <h1 id="consent-title">Poker Face reads your face.</h1>
+      <ul class="consent-list">
+        <li><strong>What it uses.</strong> Your webcam, analysed by the Presage SmartSpectra SDK running on this computer, to estimate facial expression and a pulse reading.</li>
+        <li><strong>What it keeps.</strong> Nothing. No video, image or reading is saved to disk. Closing the app ends the session.</li>
+        <li><strong>What leaves this app.</strong> The stream overlay receives game state only (timer, points, a rounded pulse number) over a local address. The SDK contacts Presage to validate the API key; its optional telemetry is switched off. See Presage's privacy documentation for the SDK's own data handling.</li>
+        <li><strong>What it is.</strong> A game. The pulse reading is for entertainment and is not a medical measurement.</li>
+        <li><strong>Who is on camera.</strong> Only you. Do not point it at anyone who has not agreed.</li>
+      </ul>
+      <div class="consent-actions">
+        <button class="btn btn-primary" id="consent-yes" type="button">I agree, turn on the camera</button>
+        <button class="btn btn-ghost" id="consent-no" type="button">Not now</button>
+      </div>
+      <p class="consent-note" id="consent-note" hidden>The camera stays off. You can agree whenever you are ready.</p>
+    </div>
+  </section>
+
+  <main class="table" id="table" hidden>
+    <header class="masthead">
+      <h1><span aria-hidden="true">♠</span> Poker Face</h1>
+      <p class="status" id="status" role="status">Camera off</p>
+      <button class="btn btn-ghost btn-small" id="revoke" type="button">Turn camera off</button>
+    </header>
+
+    <section class="seat" aria-label="Camera and signals">
+      <div class="preview">
+        <canvas id="preview" width="320" height="180" aria-label="Camera preview"></canvas>
+        <p class="preview-hint" id="face-hint">Pick a camera to begin.</p>
+      </div>
+      <form class="camera-row" id="camera-form">
+        <label for="camera">Camera</label>
+        <select id="camera" required></select>
+        <button class="btn btn-small" type="submit">Use this camera</button>
+      </form>
+      <p class="error" id="error" role="alert" hidden></p>
+
+      <div class="meters">
+        <div class="meter">
+          <div class="meter-head"><span>Face strain</span><span id="reaction">–</span></div>
+          <div class="bar"><span class="bar-fill" id="strain-fill"></span></div>
+        </div>
+        <dl class="readouts">
+          <div><dt>Pulse</dt><dd id="pulse">signal lost</dd></div>
+          <div><dt>Baseline</dt><dd id="baseline">–</dd></div>
+          <div><dt>Tension</dt><dd id="multiplier">×1.0</dd></div>
+        </dl>
+        <p class="fineprint">Pulse is shown only while the reading is stable. For entertainment, not a medical measurement.</p>
+      </div>
+    </section>
+
+    <section class="play" aria-label="Round">
+      <p class="clock" id="clock">0:00.0</p>
+      <p class="round-line" id="round-line">Calibrate to deal the first hand.</p>
+      <div class="calibration" id="calibration" hidden><span class="calibration-fill" id="calibration-fill"></span></div>
+      <div class="round-actions">
+        <button class="btn" id="calibrate" type="button">Calibrate</button>
+        <button class="btn btn-primary" id="start" type="button">Deal a round</button>
+        <button class="btn btn-danger" id="stop" type="button">Fold</button>
+      </div>
+      <label class="threshold" for="threshold">
+        <span>Break threshold <output id="threshold-value">70</output></span>
+        <input id="threshold" type="range" min="30" max="95" step="1" value="70">
+        <small id="resting">Higher is more forgiving.</small>
+      </label>
+    </section>
+
+    <section class="chat" aria-labelledby="chat-title">
+      <h2 id="chat-title">Chat simulator</h2>
+      <label for="sender">Viewer name</label>
+      <input id="sender" type="text" maxlength="24" value="viewer_one" autocomplete="off">
+      <div class="distractions" id="distractions"></div>
+    </section>
+
+    <section class="breakers" aria-labelledby="breakers-title">
+      <h2 id="breakers-title">Top Breakers</h2>
+      <ol id="board-list"></ol>
+      <p class="best">Best hold <strong id="best">0:00.0</strong></p>
+    </section>
+
+    <footer class="overlay-bar">
+      <span>OBS browser source</span>
+      <code id="overlay-url">starting…</code>
+      <button class="btn btn-small" id="copy-url" type="button">Copy</button>
+    </footer>
+  </main>
+
+  <script src="control.js" defer></script>
+</body>
+</html>

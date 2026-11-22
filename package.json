@@ -8,9 +8,15 @@
     "node": ">=20"
   },
   "scripts": {
+    "start": "electron .",
+    "test": "node --test \"test/*.test.mjs\"",
     "spike": "node --env-file=.env spike-poker-face.mjs"
   },
   "dependencies": {
     "@smartspectra/node-sdk": "^3.5.0"
-  }
+  },
+  "devDependencies": {
+    "electron": "^45.4.1"
+  },
+  "main": "src/main/main.mjs"
 }
